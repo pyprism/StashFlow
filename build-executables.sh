@@ -41,8 +41,8 @@ do
 
     echo "Building release/$output_binary for $os-$GOARCH..."
     env GOOS=$GOOS GOARCH=$GOARCH go build \
-        -ldflags="-s -w" \
-      -o release/$output_binary
+        -ldflags="-s -w -X main.version=$version" \
+      -o release/$output_binary ./cmd/stashflow
     if [ $? -ne 0 ]; then
         echo 'An error has occurred! Aborting the script execution...'
         exit 1

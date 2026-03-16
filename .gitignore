@@ -5,6 +5,7 @@ coverage.html
 # Build artifacts
 stashflow
 stashflow-linux-arm64
+release/
 
 # IDE files
 .idea/
