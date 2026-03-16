@@ -1,2 +1,15 @@
+# Test coverage files
+coverage.out
+coverage.html
+
+# Build artifacts
+stashflow
+stashflow-linux-arm64
+
+# IDE files
 .idea/
+.vscode/
+
+# OS files
 .DS_Store
+Thumbs.db
