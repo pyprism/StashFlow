@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StashFlow</title>
+  <link rel="icon" type="image/png" href="/assets/images/favicon.png">
+  <link rel="stylesheet" href="/assets/assets.css">
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="brand">
+        <img src="/assets/images/pirate.png" alt="StashFlow" class="brand-logo">
+        <div class="brand-text">
+          <h1>StashFlow</h1>
+          <p>Storage aware torrent queue with a single binary footprint.</p>
+        </div>
+      </div>
+      <label class="toggle">
+        <span>Theme</span>
+        <input id="themeToggle" type="checkbox" aria-label="Toggle theme">
+      </label>
+    </header>
+
+    <main class="main">
+      <section class="card">
+        <h2>Storage</h2>
+        <div class="stats" id="storageStats"></div>
+        <div class="actions">
+          <button id="manualCheck">Check Storage Now</button>
+        </div>
+        <div id="storageNote" class="toast" style="display:none;"></div>
+      </section>
+
+      <section class="card">
+        <h2>Add Torrent</h2>
+        <div class="settings-grid">
+          <label>
+            Magnet URL
+            <input type="text" id="magnetInput" placeholder="magnet:?xt=urn:btih:...">
+          </label>
+          <label>
+            Torrent File
+            <input type="file" id="fileInput" accept=".torrent">
+          </label>
+          <div class="actions">
+            <button id="addTorrent">Add to Queue</button>
+          </div>
+          <div id="addMessage" class="toast" style="display:none;"></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Queue <span class="counter" id="queueCount">0</span></h2>
+        <p>Drag a torrent to reorder the queue. Only one downloads at a time.</p>
+        <div class="queue" id="queueList"></div>
+      </section>
+
+      <section class="card">
+        <h2>Completed <span class="counter" id="completedCount">0</span></h2>
+        <div class="queue" id="completedList"></div>
+      </section>
+
+      <section class="card">
+        <h2>Settings</h2>
+        <div class="settings-grid">
+          <label>
+            Storage Path
+            <input type="text" id="storagePath">
+          </label>
+          <label>
+            Port
+            <input type="number" id="portInput" min="1" max="65535">
+          </label>
+          <label>
+            Max Storage Usage (%)
+            <input type="number" id="maxUsageInput" min="1" max="100" step="1" placeholder="90">
+          </label>
+          <div class="actions">
+            <button id="saveSettings">Save Settings</button>
+            <span id="settingsNote" class="toast" style="display:none;"></span>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/assets/assets.js"></script>
+</body>
+</html>
