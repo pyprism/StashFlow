@@ -53,7 +53,7 @@ func TorrentDir() (string, error) {
 }
 
 func PidPath() (string, error) {
-	dir, err := TorrentDir()
+	dir, err := ConfigDir()
 	if err != nil {
 		return "", err
 	}
