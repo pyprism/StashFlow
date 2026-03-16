@@ -144,13 +144,7 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if loaded.StoragePath != cfg.StoragePath {
-		t.Errorf("expected StoragePath=%q, got %q", cfg.StoragePath, loaded.StoragePath)
-	}
-	if loaded.Port != cfg.Port {
-		t.Errorf("expected Port=%d, got %d", cfg.Port, loaded.Port)
-	}
-	if loaded.MaxUsagePercent != cfg.MaxUsagePercent {
-		t.Errorf("expected MaxUsagePercent=%f, got %f", cfg.MaxUsagePercent, loaded.MaxUsagePercent)
-	}
+if !reflect.DeepEqual(loaded, cfg) {
+	t.Errorf("loaded config differs from saved config.\nwant: %+v\ngot:  %+v", cfg, loaded)
+}
 }
