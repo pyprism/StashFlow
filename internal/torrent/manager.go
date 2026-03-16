@@ -253,16 +253,23 @@ func (m *Manager) populateInfo(id string, t *atorrent.Torrent) {
 	}
 	canFit, reason := storage.CanFit(stats, uint64(total))
 	if !canFit {
-		item.Status = StatusError
-		item.ErrorMessage = reason
-		t.Drop()
-		m.saveStateLocked()
-		changed := m.onChange
-		m.mu.Unlock()
-		if changed != nil {
-			changed()
+		if uint64(total) > stats.MaxUsageBytes {
+			// Permanent: torrent is larger than max allowed — will never fit.
+			item.Status = StatusError
+			item.ErrorMessage = reason
+			t.Drop()
+			delete(m.torrents, id)
+			m.saveStateLocked()
+			changed := m.onChange
+			m.mu.Unlock()
+			if changed != nil {
+				changed()
+			}
+			return
 		}
-		return
+		// Temporary: not enough space right now.
+		// Leave as StatusQueued — CheckAndStartNext will retry
+		// when storage is freed.
 	}
 
 	m.saveStateLocked()
@@ -401,6 +408,12 @@ func (m *Manager) loadState() error {
 			item.Status = StatusQueued
 			item.Progress = 0
 			item.Downloaded = 0
+		}
+		// Recover items that failed due to temporary storage shortage.
+		// They will be retried when CheckAndStartNext runs.
+		if item.Status == StatusError && item.ErrorMessage == "not enough storage available" {
+			item.Status = StatusQueued
+			item.ErrorMessage = ""
 		}
 		m.items[item.ID] = item
 	}
