@@ -1,4 +1,4 @@
-.PHONY: test test-verbose test-cover test-bench build clean help
+.PHONY: test test-verbose test-cover test-bench build build-arm64 clean help
 
 # Default target
 all: test build
@@ -29,6 +29,10 @@ test-bench:
 build:
 	go build -o stashflow ./cmd/stashflow
 
+# build for arm64
+build-arm64:
+	GOOS=linux GOARCH=arm64 go build -o stashflow-linux-arm64 ./cmd/stashflow
+
 # Run linting
 lint:
 	go vet ./...
@@ -36,7 +40,7 @@ lint:
 
 # Clean build artifacts and coverage files
 clean:
-	rm -f stashflow coverage.out coverage.html
+	rm -f stashflow stashflow-linux-arm64 coverage.out coverage.html
 
 # Show help
 help:
@@ -47,6 +51,7 @@ help:
 	@echo "  coverage-html - Generate HTML coverage report"
 	@echo "  test-bench   - Run benchmark tests"
 	@echo "  build        - Build the stashflow binary"
+	@echo "  build-arm64  - Build for Linux ARM64"
 	@echo "  lint         - Run go vet and go fmt"
 	@echo "  clean        - Clean build artifacts"
 	@echo "  help         - Show this help message"
