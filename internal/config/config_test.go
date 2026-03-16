@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -144,7 +145,7 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-if !reflect.DeepEqual(loaded, cfg) {
-	t.Errorf("loaded config differs from saved config.\nwant: %+v\ngot:  %+v", cfg, loaded)
-}
+	if !reflect.DeepEqual(loaded, cfg) {
+		t.Errorf("loaded config differs from saved config.\nwant: %+v\ngot:  %+v", cfg, loaded)
+	}
 }
