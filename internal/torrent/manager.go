@@ -33,6 +33,7 @@ func NewManager(storagePath, torrentDir, statePath string, maxUsagePercent float
 	cfg := atorrent.NewDefaultClientConfig()
 	cfg.DataDir = storagePath
 	cfg.NoDefaultPortForwarding = true
+	cfg.ListenPort = 0
 
 	client, err := atorrent.NewClient(cfg)
 	if err != nil {
@@ -165,6 +166,7 @@ func (m *Manager) AddMagnet(magnet string) (*Item, error) {
 	m.saveStateLocked()
 
 	go m.populateInfo(id, t)
+	result := *item
 	changed := m.onChange
 	m.mu.Unlock()
 
@@ -172,7 +174,7 @@ func (m *Manager) AddMagnet(magnet string) (*Item, error) {
 		changed()
 	}
 
-	return item, nil
+	return &result, nil
 }
 
 func (m *Manager) AddTorrentFile(filename string, data []byte) (*Item, error) {
@@ -205,6 +207,7 @@ func (m *Manager) AddTorrentFile(filename string, data []byte) (*Item, error) {
 	m.saveStateLocked()
 
 	go m.populateInfo(id, t)
+	result := *item
 	changed := m.onChange
 	m.mu.Unlock()
 
@@ -212,7 +215,7 @@ func (m *Manager) AddTorrentFile(filename string, data []byte) (*Item, error) {
 		changed()
 	}
 
-	return item, nil
+	return &result, nil
 }
 
 func (m *Manager) populateInfo(id string, t *atorrent.Torrent) {
