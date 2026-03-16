@@ -21,6 +21,8 @@ import (
 
 const daemonEnv = "_STASHFLOW_DAEMON"
 
+var version = "v1.0.0"
+
 func main() {
 	// If we are the spawned daemon child, run the server directly.
 	// This must be checked first — the child is launched without args.
@@ -60,7 +62,7 @@ func main() {
 			os.Exit(1)
 		}
 	case "version":
-		fmt.Println("StashFlow v1.0.0")
+		fmt.Println("StashFlow " + version)
 	default:
 		printUsage()
 		os.Exit(1)
