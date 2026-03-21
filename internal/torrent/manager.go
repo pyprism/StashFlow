@@ -283,6 +283,17 @@ func (m *Manager) populateInfo(id string, t *atorrent.Torrent) {
 		changed()
 	}
 	m.CheckAndStartNext()
+
+	// If the item is still queued after CheckAndStartNext, drop the torrent
+	// from the client to prevent tracker announces and peer connections while idle.
+	m.mu.Lock()
+	if it, ok := m.items[id]; ok && it.Status == StatusQueued {
+		if ct := m.torrents[id]; ct != nil {
+			ct.Drop()
+			delete(m.torrents, id)
+		}
+	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) Remove(id string) error {
@@ -371,14 +382,25 @@ func (m *Manager) CheckAndStartNext() {
 		if !canFit {
 			continue
 		}
+
 		t := m.torrents[id]
 		if t == nil {
-			continue
+			// Torrent was dropped while queued to prevent tracker hits.
+			// Re-add it now that we're ready to download.
+			var err error
+			if item.Magnet != "" {
+				t, err = m.client.AddMagnet(item.Magnet)
+			} else if item.TorrentFile != "" {
+				t, err = m.client.AddTorrentFromFile(item.TorrentFile)
+			}
+			if err != nil || t == nil {
+				continue
+			}
+			m.torrents[id] = t
 		}
-		if t.Info() == nil {
-			continue
-		}
-		t.DownloadAll()
+
+		// Mark as downloading and set active before releasing the lock
+		// to prevent another goroutine from starting a second download.
 		item.Status = StatusDownloading
 		item.ErrorMessage = ""
 		m.activeID = id
@@ -388,9 +410,47 @@ func (m *Manager) CheckAndStartNext() {
 		if changed != nil {
 			changed()
 		}
+
+		// Wait for info and start download in background.
+		// For .torrent files info is available immediately;
+		// for magnets it requires a tracker round-trip.
+		go m.awaitInfoAndDownload(id, t)
 		return
 	}
 	m.mu.Unlock()
+}
+
+func (m *Manager) awaitInfoAndDownload(id string, t *atorrent.Torrent) {
+	<-t.GotInfo()
+
+	m.mu.Lock()
+	item, ok := m.items[id]
+	if !ok {
+		// Item was removed while waiting for info
+		t.Drop()
+		delete(m.torrents, id)
+		m.mu.Unlock()
+		return
+	}
+	if t.Info() == nil {
+		item.Status = StatusError
+		item.ErrorMessage = "failed to read torrent metadata"
+		m.activeID = ""
+		m.saveStateLocked()
+		changed := m.onChange
+		m.mu.Unlock()
+		if changed != nil {
+			changed()
+		}
+		return
+	}
+	t.DownloadAll()
+	m.saveStateLocked()
+	changed := m.onChange
+	m.mu.Unlock()
+	if changed != nil {
+		changed()
+	}
 }
 
 func (m *Manager) loadState() error {
@@ -422,9 +482,16 @@ func (m *Manager) loadState() error {
 	}
 	m.order = state.Order
 
-	// Reattach torrents for queued items
+	// Reattach torrents for queued items that still need metadata.
+	// Items that already have metadata (Name is set) are kept idle —
+	// they will be re-added to the client by CheckAndStartNext when
+	// it is time to download, avoiding unnecessary tracker hits.
 	for _, item := range state.Items {
 		if item.Status != StatusQueued {
+			continue
+		}
+		if item.Name != "" {
+			// Already have metadata; no need to add to client yet.
 			continue
 		}
 		if item.Magnet != "" {
