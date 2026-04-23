@@ -614,6 +614,237 @@ func TestHandleUpdateSettingsSameValues(t *testing.T) {
 // POST /api/torrents  (valid torrent file upload)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Method-not-allowed edge cases
+// ---------------------------------------------------------------------------
+
+func TestHandleStatePOSTNotAllowed(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/state", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code == http.StatusOK {
+		t.Errorf("POST /api/state should not return 200")
+	}
+}
+
+func TestHandleAddTorrentEmptyMagnet(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	body := strings.NewReader("magnet=")
+	req := httptest.NewRequest(http.MethodPost, "/api/torrents", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty magnet, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleReorderWithMultipleTorrents(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	// Add two torrents.
+	add := func(hash, name string) string {
+		magnet := "magnet%3A%3Fxt%3Durn%3Abtih%3A" + hash + "%26dn%3D" + name
+		addBody := strings.NewReader("magnet=" + magnet)
+		addReq := httptest.NewRequest(http.MethodPost, "/api/torrents", addBody)
+		addReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		addW := httptest.NewRecorder()
+		r.ServeHTTP(addW, addReq)
+		if addW.Code != http.StatusOK {
+			t.Fatalf("add torrent: expected 200, got %d", addW.Code)
+		}
+		var item map[string]any
+		json.Unmarshal(addW.Body.Bytes(), &item)
+		return item["id"].(string)
+	}
+
+	id1 := add("0123456789abcdef0123456789abcdef01234560", "torrent-one")
+	id2 := add("0123456789abcdef0123456789abcdef01234561", "torrent-two")
+
+	// Reorder: put second before first.
+	payload, _ := json.Marshal(map[string]any{"order": []string{id2, id1}})
+	req := httptest.NewRequest(http.MethodPost, "/api/queue/reorder", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify state reflects new order.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	var body map[string]json.RawMessage
+	json.Unmarshal(w2.Body.Bytes(), &body)
+	var state map[string]json.RawMessage
+	json.Unmarshal(body["state"], &state)
+	var order []string
+	json.Unmarshal(state["order"], &order)
+
+	if len(order) < 2 {
+		t.Fatalf("expected at least 2 items in order, got %d", len(order))
+	}
+	if order[0] != id2 || order[1] != id1 {
+		t.Errorf("expected order [%s, %s], got %v", id2, id1, order)
+	}
+}
+
+func TestHandleStorageCheckResponseFields(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/storage/check", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var stats map[string]any
+	json.Unmarshal(w.Body.Bytes(), &stats)
+
+	for _, field := range []string{"total_bytes", "used_bytes", "free_bytes", "max_usage_bytes", "available_for_new"} {
+		if stats[field] == nil {
+			t.Errorf("missing field %q in storage response", field)
+		}
+	}
+}
+
+func TestHandleRemoveTorrentMissingID(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/torrents/", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// Either 404 or 405, definitely not 200/204.
+	if w.Code == http.StatusNoContent || w.Code == http.StatusOK {
+		t.Errorf("expected error status for empty ID, got %d", w.Code)
+	}
+}
+
+func TestHandleAddMultipleMagnets(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	hashes := []string{
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"cccccccccccccccccccccccccccccccccccccccc",
+	}
+
+	ids := make([]string, 0, len(hashes))
+	for _, h := range hashes {
+		magnet := "magnet%3A%3Fxt%3Durn%3Abtih%3A" + h
+		addBody := strings.NewReader("magnet=" + magnet)
+		req := httptest.NewRequest(http.MethodPost, "/api/torrents", addBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("add: expected 200, got %d", w.Code)
+		}
+		var item map[string]any
+		json.Unmarshal(w.Body.Bytes(), &item)
+		ids = append(ids, item["id"].(string))
+	}
+
+	// State should show 3 items.
+	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	var body map[string]json.RawMessage
+	json.Unmarshal(w.Body.Bytes(), &body)
+	var state map[string]json.RawMessage
+	json.Unmarshal(body["state"], &state)
+	var items []json.RawMessage
+	json.Unmarshal(state["items"], &items)
+
+	if len(items) != 3 {
+		t.Errorf("expected 3 items in state, got %d", len(items))
+	}
+
+	// Remove all.
+	for _, id := range ids {
+		req := httptest.NewRequest(http.MethodDelete, "/api/torrents/"+id, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusNoContent {
+			t.Errorf("remove %s: expected 204, got %d", id, w.Code)
+		}
+	}
+
+	// State should show 0 items.
+	req = httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	json.Unmarshal(w.Body.Bytes(), &body)
+	json.Unmarshal(body["state"], &state)
+	json.Unmarshal(state["items"], &items)
+
+	if len(items) != 0 {
+		t.Errorf("expected 0 items after removal, got %d", len(items))
+	}
+}
+
+func TestHandleUpdateSettingsPortZero(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	payload := `{"port": 0}`
+	req := httptest.NewRequest(http.MethodPut, "/api/settings", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// Port 0 is same as current (default 0), no restart needed.
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleGetSettingsResponseFields(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	for _, field := range []string{"storage_path", "port", "max_usage_percent"} {
+		if _, ok := m[field]; !ok {
+			t.Errorf("missing field %q in settings response", field)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/torrents  (valid torrent file upload)
+// ---------------------------------------------------------------------------
+
 func TestHandleAddTorrentFileUploadValid(t *testing.T) {
 	srv := setupTestServer(t)
 	r := srv.Router()
