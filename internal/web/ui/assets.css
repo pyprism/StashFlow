@@ -309,6 +309,29 @@ input[type="file"]::file-selector-button {
   flex-direction: column;
   gap: 10px;
   min-height: 40px;
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent) var(--panel-2);
+}
+
+.queue::-webkit-scrollbar {
+  width: 6px;
+}
+
+.queue::-webkit-scrollbar-track {
+  background: var(--panel-2);
+  border-radius: 999px;
+}
+
+.queue::-webkit-scrollbar-thumb {
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.queue::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-2);
 }
 
 .torrent {
