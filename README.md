@@ -1,6 +1,6 @@
 # StashFlow [![Stashflow CI](https://github.com/pyprism/StashFlow/actions/workflows/run-tests.yaml/badge.svg)](https://github.com/pyprism/StashFlow/actions/workflows/run-tests.yaml) [![codecov](https://codecov.io/gh/pyprism/StashFlow/branch/master/graph/badge.svg?token=At5W6tSKFC)](https://codecov.io/gh/pyprism/StashFlow)
 
-<div style="text-align:center;"><img src="internal/web/ui/images/logo.png" alt="StashFlow logo" width="200" style="max-width:200px; height:auto;"></div>
+<div align="center"><img src="internal/web/ui/images/logo.png" alt="StashFlow logo" width="200" style="max-width:200px; height:auto;"></div>
 
 StashFlow is a lightweight, storage aware torrent client  with a single binary deployment.
 
