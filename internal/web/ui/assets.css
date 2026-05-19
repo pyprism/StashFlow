@@ -425,6 +425,11 @@ input[type="file"]::file-selector-button {
   background: rgba(66, 198, 201, 0.12);
 }
 
+.status.paused {
+  color: var(--accent-2);
+  background: rgba(217, 125, 84, 0.14);
+}
+
 .status.completed {
   color: var(--good);
   background: rgba(30, 143, 77, 0.12);
@@ -439,6 +444,12 @@ input[type="file"]::file-selector-button {
   color: var(--bad);
   font-size: 12px;
   word-break: break-word;
+}
+
+.queue-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .toast {
