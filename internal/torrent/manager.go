@@ -657,7 +657,7 @@ func (m *Manager) loadState() error {
 			item.ErrorMessage = ""
 		}
 
-		if item.Magnet != "" && item.Name == "" {
+		if item.Magnet != "" && (item.Name == "" || item.InfoHash == "") {
 			if magnet, err := metainfo.ParseMagnetUri(item.Magnet); err == nil {
 				item.Name = magnet.DisplayName
 				if item.InfoHash == "" {
@@ -665,7 +665,7 @@ func (m *Manager) loadState() error {
 				}
 			}
 		}
-		if item.TorrentFile != "" && (item.Name == "" || item.SizeBytes == 0) {
+		if item.TorrentFile != "" && (item.Name == "" || item.SizeBytes == 0 || item.InfoHash == "") {
 			if mi, info, err := loadTorrentMetadataFromFile(item.TorrentFile); err == nil {
 				item.Name = chooseName(item.Name, info.Name)
 				if item.SizeBytes == 0 {
