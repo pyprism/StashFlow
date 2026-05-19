@@ -902,6 +902,43 @@ func TestHandleAddTorrentFileUploadValid(t *testing.T) {
 	}
 }
 
+func TestHandleAddTorrentFileUploadRejectsDuplicate(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	torrentData := []byte("d8:announce35:http://tracker.example.com/announce4:infod6:lengthi1024e4:name8:test.txt12:piece lengthi16384e6:pieces20:xxxxxxxxxxxxxxxxxxxx7:privatei0eee")
+
+	makeRequest := func(filename string) *httptest.ResponseRecorder {
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+		part, err := writer.CreateFormFile("file", filename)
+		if err != nil {
+			t.Fatalf("CreateFormFile: %v", err)
+		}
+		_, _ = part.Write(torrentData)
+		writer.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/api/torrents", &buf)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	first := makeRequest("first.torrent")
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected first upload to succeed, got %d; body: %s", first.Code, first.Body.String())
+	}
+
+	dup := makeRequest("duplicate.torrent")
+	if dup.Code != http.StatusBadRequest {
+		t.Fatalf("expected duplicate upload to fail, got %d; body: %s", dup.Code, dup.Body.String())
+	}
+	if !strings.Contains(dup.Body.String(), "torrent already queued") {
+		t.Fatalf("expected duplicate error message, got %s", dup.Body.String())
+	}
+}
+
 func TestHandlePauseAndResumeTorrent(t *testing.T) {
 	srv := setupTestServer(t)
 	r := srv.Router()
