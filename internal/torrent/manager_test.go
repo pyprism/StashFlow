@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -569,6 +570,9 @@ func TestManagerAddMagnet(t *testing.T) {
 	if item.Magnet != magnet {
 		t.Errorf("expected magnet to match")
 	}
+	if item.InfoHash != "0123456789abcdef0123456789abcdef01234567" {
+		t.Errorf("expected parsed info hash, got %q", item.InfoHash)
+	}
 	if item.ID == "" {
 		t.Error("expected non-empty ID")
 	}
@@ -591,6 +595,23 @@ func TestManagerAddMagnetCallsOnChange(t *testing.T) {
 	_, _ = m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=test")
 	if !called.Load() {
 		t.Error("expected onChange to be called after AddMagnet")
+	}
+}
+
+func TestManagerAddMagnetRejectsDuplicateInfoHash(t *testing.T) {
+	m := newRealManager(t)
+
+	_, err := m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=first")
+	if err != nil {
+		t.Fatalf("first AddMagnet() error: %v", err)
+	}
+
+	_, err = m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=second&tr=http://tracker.example.com/announce")
+	if err == nil {
+		t.Fatal("expected duplicate magnet to be rejected")
+	}
+	if !strings.Contains(err.Error(), errDuplicateTorrent) {
+		t.Fatalf("expected duplicate error, got %v", err)
 	}
 }
 
@@ -644,6 +665,9 @@ func TestManagerAddTorrentFileValid(t *testing.T) {
 	if item.Name != "test.txt" {
 		t.Errorf("expected parsed torrent name, got %q", item.Name)
 	}
+	if item.InfoHash == "" {
+		t.Error("expected parsed torrent info hash")
+	}
 	if item.SizeBytes != 1024 {
 		t.Errorf("expected parsed torrent size, got %d", item.SizeBytes)
 	}
@@ -666,6 +690,41 @@ func TestManagerAddTorrentFileCallsOnChange(t *testing.T) {
 	_, _ = m.AddTorrentFile("test.torrent", torrentData)
 	if !called.Load() {
 		t.Error("expected onChange to be called after AddTorrentFile")
+	}
+}
+
+func TestManagerAddTorrentFileRejectsDuplicateInfoHash(t *testing.T) {
+	m := newRealManager(t)
+
+	torrentData := []byte(minimalTorrentData)
+	if _, err := m.AddTorrentFile("first.torrent", torrentData); err != nil {
+		t.Fatalf("first AddTorrentFile() error: %v", err)
+	}
+
+	_, err := m.AddTorrentFile("second.torrent", torrentData)
+	if err == nil {
+		t.Fatal("expected duplicate torrent file to be rejected")
+	}
+	if !strings.Contains(err.Error(), errDuplicateTorrent) {
+		t.Fatalf("expected duplicate error, got %v", err)
+	}
+}
+
+func TestManagerRejectsDuplicateAcrossMagnetAndTorrentFile(t *testing.T) {
+	m := newRealManager(t)
+
+	torrentData := []byte(minimalTorrentData)
+	item, err := m.AddTorrentFile("first.torrent", torrentData)
+	if err != nil {
+		t.Fatalf("AddTorrentFile() error: %v", err)
+	}
+
+	_, err = m.AddMagnet("magnet:?xt=urn:btih:" + item.InfoHash + "&dn=same-content")
+	if err == nil {
+		t.Fatal("expected duplicate magnet to be rejected when torrent file is already queued")
+	}
+	if !strings.Contains(err.Error(), errDuplicateTorrent) {
+		t.Fatalf("expected duplicate error, got %v", err)
 	}
 }
 
