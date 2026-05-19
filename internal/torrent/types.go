@@ -15,6 +15,7 @@ const (
 type Item struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
+	InfoHash     string    `json:"info_hash"`
 	SizeBytes    int64     `json:"size_bytes"`
 	Status       Status    `json:"status"`
 	Progress     float64   `json:"progress"`
