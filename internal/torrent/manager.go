@@ -21,6 +21,7 @@ const (
 	errFailedMetadata     = "failed to read torrent metadata"
 	errFailedStorageStats = "failed to read storage stats"
 	errTemporaryStorage   = "not enough storage available"
+	errDuplicateTorrent   = "torrent already queued"
 )
 
 type storageDecision int
@@ -217,10 +218,16 @@ func (m *Manager) AddMagnet(magnetURI string) (*Item, error) {
 		m.mu.Unlock()
 		return nil, err
 	}
+	infoHash := magnet.InfoHash.HexString()
+	if duplicate := m.findQueuedDuplicateLocked(infoHash, ""); duplicate != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("%s: %s", errDuplicateTorrent, duplicate.NameOrID())
+	}
 
 	item := &Item{
 		ID:       uuid.NewString(),
 		Name:     magnet.DisplayName,
+		InfoHash: infoHash,
 		Status:   StatusQueued,
 		Progress: 0,
 		AddedAt:  time.Now(),
@@ -240,10 +247,15 @@ func (m *Manager) AddMagnet(magnetURI string) (*Item, error) {
 
 func (m *Manager) AddTorrentFile(filename string, data []byte) (*Item, error) {
 	m.mu.Lock()
-	_, info, err := parseTorrentMetadata(data)
+	mi, info, err := parseTorrentMetadata(data)
 	if err != nil {
 		m.mu.Unlock()
 		return nil, err
+	}
+	infoHash := mi.HashInfoBytes().HexString()
+	if duplicate := m.findQueuedDuplicateLocked(infoHash, ""); duplicate != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("%s: %s", errDuplicateTorrent, duplicate.NameOrID())
 	}
 
 	id := uuid.NewString()
@@ -256,6 +268,7 @@ func (m *Manager) AddTorrentFile(filename string, data []byte) (*Item, error) {
 	item := &Item{
 		ID:          id,
 		Name:        info.Name,
+		InfoHash:    infoHash,
 		SizeBytes:   info.TotalLength(),
 		Status:      StatusQueued,
 		Progress:    0,
@@ -647,13 +660,19 @@ func (m *Manager) loadState() error {
 		if item.Magnet != "" && item.Name == "" {
 			if magnet, err := metainfo.ParseMagnetUri(item.Magnet); err == nil {
 				item.Name = magnet.DisplayName
+				if item.InfoHash == "" {
+					item.InfoHash = magnet.InfoHash.HexString()
+				}
 			}
 		}
 		if item.TorrentFile != "" && (item.Name == "" || item.SizeBytes == 0) {
-			if _, info, err := loadTorrentMetadataFromFile(item.TorrentFile); err == nil {
+			if mi, info, err := loadTorrentMetadataFromFile(item.TorrentFile); err == nil {
 				item.Name = chooseName(item.Name, info.Name)
 				if item.SizeBytes == 0 {
 					item.SizeBytes = info.TotalLength()
+				}
+				if item.InfoHash == "" {
+					item.InfoHash = mi.HashInfoBytes().HexString()
 				}
 			}
 		}
@@ -801,6 +820,24 @@ func chooseName(current, fallback string) string {
 	return fallback
 }
 
+func (m *Manager) findQueuedDuplicateLocked(infoHash string, excludeID string) *Item {
+	if infoHash == "" {
+		return nil
+	}
+	for id, item := range m.items {
+		if id == excludeID || item == nil {
+			continue
+		}
+		if item.InfoHash != infoHash {
+			continue
+		}
+		if item.Status == StatusQueued || item.Status == StatusDownloading || item.Status == StatusPaused {
+			return item
+		}
+	}
+	return nil
+}
+
 func filterOrder(order []string, removeID string) []string {
 	filtered := make([]string, 0, len(order))
 	for _, id := range order {
@@ -828,4 +865,14 @@ func countStatuses(items map[string]*Item) QueueCounts {
 		}
 	}
 	return counts
+}
+
+func (i *Item) NameOrID() string {
+	if i == nil {
+		return ""
+	}
+	if i.Name != "" {
+		return i.Name
+	}
+	return i.ID
 }
