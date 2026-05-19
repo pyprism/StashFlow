@@ -368,6 +368,32 @@ func TestHandleAddTorrentMagnet(t *testing.T) {
 	}
 }
 
+func TestHandleAddTorrentMagnetRejectsDuplicate(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	body := strings.NewReader("magnet=magnet%3A%3Fxt%3Durn%3Abtih%3A0123456789abcdef0123456789abcdef01234567%26dn%3Dtest")
+	req := httptest.NewRequest(http.MethodPost, "/api/torrents", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected first add to succeed, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	dupBody := strings.NewReader("magnet=magnet%3A%3Fxt%3Durn%3Abtih%3A0123456789abcdef0123456789abcdef01234567%26dn%3Dduplicate")
+	dupReq := httptest.NewRequest(http.MethodPost, "/api/torrents", dupBody)
+	dupReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	dupW := httptest.NewRecorder()
+	r.ServeHTTP(dupW, dupReq)
+	if dupW.Code != http.StatusBadRequest {
+		t.Fatalf("expected duplicate add to fail, got %d; body: %s", dupW.Code, dupW.Body.String())
+	}
+	if !strings.Contains(dupW.Body.String(), "torrent already queued") {
+		t.Fatalf("expected duplicate error message, got %s", dupW.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // DELETE /api/torrents/:id
 // ---------------------------------------------------------------------------
