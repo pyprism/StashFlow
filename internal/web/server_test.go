@@ -368,6 +368,32 @@ func TestHandleAddTorrentMagnet(t *testing.T) {
 	}
 }
 
+func TestHandleAddTorrentMagnetRejectsDuplicate(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	body := strings.NewReader("magnet=magnet%3A%3Fxt%3Durn%3Abtih%3A0123456789abcdef0123456789abcdef01234567%26dn%3Dtest")
+	req := httptest.NewRequest(http.MethodPost, "/api/torrents", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected first add to succeed, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	dupBody := strings.NewReader("magnet=magnet%3A%3Fxt%3Durn%3Abtih%3A0123456789abcdef0123456789abcdef01234567%26dn%3Dduplicate")
+	dupReq := httptest.NewRequest(http.MethodPost, "/api/torrents", dupBody)
+	dupReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	dupW := httptest.NewRecorder()
+	r.ServeHTTP(dupW, dupReq)
+	if dupW.Code != http.StatusBadRequest {
+		t.Fatalf("expected duplicate add to fail, got %d; body: %s", dupW.Code, dupW.Body.String())
+	}
+	if !strings.Contains(dupW.Body.String(), "torrent already queued") {
+		t.Fatalf("expected duplicate error message, got %s", dupW.Body.String())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // DELETE /api/torrents/:id
 // ---------------------------------------------------------------------------
@@ -873,5 +899,87 @@ func TestHandleAddTorrentFileUploadValid(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &item)
 	if item["id"] == nil || item["id"] == "" {
 		t.Error("expected non-empty id in response")
+	}
+}
+
+func TestHandleAddTorrentFileUploadRejectsDuplicate(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	torrentData := []byte("d8:announce35:http://tracker.example.com/announce4:infod6:lengthi1024e4:name8:test.txt12:piece lengthi16384e6:pieces20:xxxxxxxxxxxxxxxxxxxx7:privatei0eee")
+
+	makeRequest := func(filename string) *httptest.ResponseRecorder {
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+		part, err := writer.CreateFormFile("file", filename)
+		if err != nil {
+			t.Fatalf("CreateFormFile: %v", err)
+		}
+		_, _ = part.Write(torrentData)
+		writer.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/api/torrents", &buf)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	first := makeRequest("first.torrent")
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected first upload to succeed, got %d; body: %s", first.Code, first.Body.String())
+	}
+
+	dup := makeRequest("duplicate.torrent")
+	if dup.Code != http.StatusBadRequest {
+		t.Fatalf("expected duplicate upload to fail, got %d; body: %s", dup.Code, dup.Body.String())
+	}
+	if !strings.Contains(dup.Body.String(), "torrent already queued") {
+		t.Fatalf("expected duplicate error message, got %s", dup.Body.String())
+	}
+}
+
+func TestHandlePauseAndResumeTorrent(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	addBody := strings.NewReader("magnet=magnet%3A%3Fxt%3Durn%3Abtih%3Aabcdefabcdefabcdefabcdefabcdefabcdefabcd%26dn%3Dpause-me")
+	addReq := httptest.NewRequest(http.MethodPost, "/api/torrents", addBody)
+	addReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addW := httptest.NewRecorder()
+	r.ServeHTTP(addW, addReq)
+
+	if addW.Code != http.StatusOK {
+		t.Fatalf("add: expected 200, got %d", addW.Code)
+	}
+	var item map[string]any
+	json.Unmarshal(addW.Body.Bytes(), &item)
+	id := item["id"].(string)
+
+	pauseReq := httptest.NewRequest(http.MethodPost, "/api/torrents/"+id+"/pause", nil)
+	pauseW := httptest.NewRecorder()
+	r.ServeHTTP(pauseW, pauseReq)
+	if pauseW.Code != http.StatusNoContent {
+		t.Fatalf("pause: expected 204, got %d; body: %s", pauseW.Code, pauseW.Body.String())
+	}
+
+	stateReq := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	stateW := httptest.NewRecorder()
+	r.ServeHTTP(stateW, stateReq)
+	var body map[string]json.RawMessage
+	json.Unmarshal(stateW.Body.Bytes(), &body)
+	var state struct {
+		Items []torrent.Item `json:"items"`
+	}
+	json.Unmarshal(body["state"], &state)
+	if len(state.Items) != 1 || state.Items[0].Status != torrent.StatusPaused {
+		t.Fatalf("expected paused item in state, got %+v", state.Items)
+	}
+
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/torrents/"+id+"/resume", nil)
+	resumeW := httptest.NewRecorder()
+	r.ServeHTTP(resumeW, resumeReq)
+	if resumeW.Code != http.StatusNoContent {
+		t.Fatalf("resume: expected 204, got %d; body: %s", resumeW.Code, resumeW.Body.String())
 	}
 }

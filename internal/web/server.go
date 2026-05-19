@@ -38,6 +38,8 @@ func (s *Server) Router() *gin.Engine {
 	r.PUT("/api/settings", s.handleUpdateSettings)
 	r.POST("/api/torrents", s.handleAddTorrent)
 	r.DELETE("/api/torrents/:id", s.handleRemoveTorrent)
+	r.POST("/api/torrents/:id/pause", s.handlePauseTorrent)
+	r.POST("/api/torrents/:id/resume", s.handleResumeTorrent)
 	r.POST("/api/queue/reorder", s.handleReorder)
 	r.POST("/api/storage/check", s.handleStorageCheck)
 	r.GET("/api/events", s.handleEvents)
@@ -173,6 +175,32 @@ func (s *Server) handleRemoveTorrent(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (s *Server) handlePauseTorrent(c *gin.Context) {
+	id := c.Param("id")
+	if err := s.mgr.Pause(id); err != nil {
+		status := http.StatusBadRequest
+		if err.Error() == "not found" {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) handleResumeTorrent(c *gin.Context) {
+	id := c.Param("id")
+	if err := s.mgr.Resume(id); err != nil {
+		status := http.StatusBadRequest
+		if err.Error() == "not found" {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (s *Server) handleReorder(c *gin.Context) {
 	var payload struct {
 		Order []string `json:"order"`
@@ -222,5 +250,3 @@ func writeSSE(c *gin.Context, data []byte) {
 	_, _ = c.Writer.Write([]byte("\n\n"))
 	c.Writer.Flush()
 }
-
-// no-op: using encoding/json directly

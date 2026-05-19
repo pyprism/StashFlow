@@ -7,6 +7,7 @@ type Status string
 const (
 	StatusQueued      Status = "queued"
 	StatusDownloading Status = "downloading"
+	StatusPaused      Status = "paused"
 	StatusCompleted   Status = "completed"
 	StatusError       Status = "error"
 )
@@ -14,6 +15,7 @@ const (
 type Item struct {
 	ID           string    `json:"id"`
 	Name         string    `json:"name"`
+	InfoHash     string    `json:"info_hash"`
 	SizeBytes    int64     `json:"size_bytes"`
 	Status       Status    `json:"status"`
 	Progress     float64   `json:"progress"`
@@ -33,4 +35,12 @@ type StateView struct {
 	Items    []*Item  `json:"items"`
 	Order    []string `json:"order"`
 	ActiveID string   `json:"active_id"`
+}
+
+type QueueCounts struct {
+	Queued      int `json:"queued"`
+	Downloading int `json:"downloading"`
+	Paused      int `json:"paused"`
+	Completed   int `json:"completed"`
+	Error       int `json:"error"`
 }
