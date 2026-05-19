@@ -78,6 +78,10 @@ function renderStorage() {
   });
 }
 
+function isPassiveMagnet(item) {
+  return item.magnet && item.status === "queued" && !item.size_bytes;
+}
+
 function buildTorrentCard(item, isCompleted = false) {
   const card = document.createElement("div");
   card.className = "torrent";
@@ -111,7 +115,29 @@ function buildTorrentCard(item, isCompleted = false) {
     meta.appendChild(errorEl);
   }
 
+  if (isPassiveMagnet(item)) {
+    const hintEl = document.createElement("span");
+    hintEl.className = "queue-hint";
+    hintEl.textContent = "Metadata lookup starts only when this magnet reaches the front of the queue.";
+    meta.appendChild(hintEl);
+  }
+
   const actions = document.createElement("div");
+  if (!isCompleted) {
+    if (item.status === "paused") {
+      const resumeBtn = document.createElement("button");
+      resumeBtn.className = "secondary";
+      resumeBtn.textContent = "Resume";
+      resumeBtn.onclick = () => resumeTorrent(item.id);
+      actions.appendChild(resumeBtn);
+    } else if (item.status === "queued" || item.status === "downloading") {
+      const pauseBtn = document.createElement("button");
+      pauseBtn.className = "secondary";
+      pauseBtn.textContent = "Pause";
+      pauseBtn.onclick = () => pauseTorrent(item.id);
+      actions.appendChild(pauseBtn);
+    }
+  }
   const removeBtn = document.createElement("button");
   removeBtn.className = "danger";
   removeBtn.textContent = "Remove";
@@ -272,9 +298,36 @@ async function addTorrent() {
 async function removeTorrent(id, name) {
   if (!confirm(`Remove "${name || id}" from the queue?`)) return;
   try {
-    await fetch(`/api/torrents/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/torrents/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      showToast(addMessage, "Failed to remove torrent.", "error");
+    }
   } catch (e) {
     console.error("Failed to remove torrent:", e);
+  }
+}
+
+async function pauseTorrent(id) {
+  try {
+    const res = await fetch(`/api/torrents/${id}/pause`, { method: "POST" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showToast(addMessage, data.error || "Failed to pause torrent.", "error");
+    }
+  } catch (e) {
+    showToast(addMessage, "Network error while pausing torrent.", "error");
+  }
+}
+
+async function resumeTorrent(id) {
+  try {
+    const res = await fetch(`/api/torrents/${id}/resume`, { method: "POST" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showToast(addMessage, data.error || "Failed to resume torrent.", "error");
+    }
+  } catch (e) {
+    showToast(addMessage, "Network error while resuming torrent.", "error");
   }
 }
 
