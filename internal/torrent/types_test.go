@@ -29,6 +29,7 @@ func TestItemJSONRoundTrip(t *testing.T) {
 	item := &Item{
 		ID:           "test-id-123",
 		Name:         "ubuntu-24.04.iso",
+		InfoHash:     "0123456789abcdef0123456789abcdef01234567",
 		SizeBytes:    4_700_000_000,
 		Status:       StatusDownloading,
 		Progress:     0.42,
@@ -53,6 +54,9 @@ func TestItemJSONRoundTrip(t *testing.T) {
 	}
 	if got.Name != item.Name {
 		t.Errorf("Name mismatch: want %q, got %q", item.Name, got.Name)
+	}
+	if got.InfoHash != item.InfoHash {
+		t.Errorf("InfoHash mismatch: want %q, got %q", item.InfoHash, got.InfoHash)
 	}
 	if got.SizeBytes != item.SizeBytes {
 		t.Errorf("SizeBytes mismatch: want %d, got %d", item.SizeBytes, got.SizeBytes)
