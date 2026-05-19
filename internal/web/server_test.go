@@ -875,3 +875,48 @@ func TestHandleAddTorrentFileUploadValid(t *testing.T) {
 		t.Error("expected non-empty id in response")
 	}
 }
+
+func TestHandlePauseAndResumeTorrent(t *testing.T) {
+	srv := setupTestServer(t)
+	r := srv.Router()
+
+	addBody := strings.NewReader("magnet=magnet%3A%3Fxt%3Durn%3Abtih%3Aabcdefabcdefabcdefabcdefabcdefabcdefabcd%26dn%3Dpause-me")
+	addReq := httptest.NewRequest(http.MethodPost, "/api/torrents", addBody)
+	addReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addW := httptest.NewRecorder()
+	r.ServeHTTP(addW, addReq)
+
+	if addW.Code != http.StatusOK {
+		t.Fatalf("add: expected 200, got %d", addW.Code)
+	}
+	var item map[string]any
+	json.Unmarshal(addW.Body.Bytes(), &item)
+	id := item["id"].(string)
+
+	pauseReq := httptest.NewRequest(http.MethodPost, "/api/torrents/"+id+"/pause", nil)
+	pauseW := httptest.NewRecorder()
+	r.ServeHTTP(pauseW, pauseReq)
+	if pauseW.Code != http.StatusNoContent {
+		t.Fatalf("pause: expected 204, got %d; body: %s", pauseW.Code, pauseW.Body.String())
+	}
+
+	stateReq := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	stateW := httptest.NewRecorder()
+	r.ServeHTTP(stateW, stateReq)
+	var body map[string]json.RawMessage
+	json.Unmarshal(stateW.Body.Bytes(), &body)
+	var state struct {
+		Items []torrent.Item `json:"items"`
+	}
+	json.Unmarshal(body["state"], &state)
+	if len(state.Items) != 1 || state.Items[0].Status != torrent.StatusPaused {
+		t.Fatalf("expected paused item in state, got %+v", state.Items)
+	}
+
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/torrents/"+id+"/resume", nil)
+	resumeW := httptest.NewRecorder()
+	r.ServeHTTP(resumeW, resumeReq)
+	if resumeW.Code != http.StatusNoContent {
+		t.Fatalf("resume: expected 204, got %d; body: %s", resumeW.Code, resumeW.Body.String())
+	}
+}

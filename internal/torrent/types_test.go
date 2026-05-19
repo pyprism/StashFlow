@@ -13,6 +13,9 @@ func TestStatusConstants(t *testing.T) {
 	if StatusDownloading != "downloading" {
 		t.Error("wrong downloading status")
 	}
+	if StatusPaused != "paused" {
+		t.Error("wrong paused status")
+	}
 	if StatusCompleted != "completed" {
 		t.Error("wrong completed status")
 	}
