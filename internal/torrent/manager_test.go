@@ -11,6 +11,8 @@ import (
 	atorrent "github.com/anacrolix/torrent"
 )
 
+const minimalTorrentData = "d8:announce35:http://tracker.example.com/announce4:infod6:lengthi1024e4:name8:test.txt12:piece lengthi16384e6:pieces20:xxxxxxxxxxxxxxxxxxxx7:privatei0eee"
+
 // newBareManager builds a Manager without a real torrent client.
 // Use only for tests that never touch m.client (State, Remove with nil
 // torrent, Reorder, SetMaxUsagePercent, saveStateLocked, …).
@@ -576,6 +578,9 @@ func TestManagerAddMagnet(t *testing.T) {
 	if len(sv.Items) != 1 {
 		t.Errorf("expected 1 item in state, got %d", len(sv.Items))
 	}
+	if m.torrents[item.ID] != nil {
+		t.Fatal("queued magnet should not be attached immediately")
+	}
 }
 
 func TestManagerAddMagnetCallsOnChange(t *testing.T) {
@@ -618,8 +623,7 @@ func TestManagerStartBackground(t *testing.T) {
 func TestManagerAddTorrentFileValid(t *testing.T) {
 	m := newRealManager(t)
 
-	// Build a minimal valid bencoded torrent (single-file, tiny).
-	torrentData := []byte("d8:announce35:http://tracker.example.com/announce4:infod6:lengthi1024e4:name8:test.txt12:piece lengthi16384e6:pieces20:xxxxxxxxxxxxxxxxxxxx7:privatei0eee")
+	torrentData := []byte(minimalTorrentData)
 
 	item, err := m.AddTorrentFile("test.torrent", torrentData)
 	if err != nil {
@@ -637,6 +641,15 @@ func TestManagerAddTorrentFileValid(t *testing.T) {
 	if item.ID == "" {
 		t.Error("expected non-empty ID")
 	}
+	if item.Name != "test.txt" {
+		t.Errorf("expected parsed torrent name, got %q", item.Name)
+	}
+	if item.SizeBytes != 1024 {
+		t.Errorf("expected parsed torrent size, got %d", item.SizeBytes)
+	}
+	if m.torrents[item.ID] != nil {
+		t.Fatal("queued torrent file should not be attached immediately")
+	}
 
 	sv := m.State()
 	if len(sv.Items) != 1 {
@@ -649,7 +662,7 @@ func TestManagerAddTorrentFileCallsOnChange(t *testing.T) {
 	var called atomic.Bool
 	m.SetOnChange(func() { called.Store(true) })
 
-	torrentData := []byte("d8:announce35:http://tracker.example.com/announce4:infod6:lengthi1024e4:name8:test.txt12:piece lengthi16384e6:pieces20:xxxxxxxxxxxxxxxxxxxx7:privatei0eee")
+	torrentData := []byte(minimalTorrentData)
 	_, _ = m.AddTorrentFile("test.torrent", torrentData)
 	if !called.Load() {
 		t.Error("expected onChange to be called after AddTorrentFile")
@@ -709,7 +722,7 @@ func TestManagerLoadStateReattachTorrentFile(t *testing.T) {
 	m := newRealManager(t)
 
 	// Create a valid torrent file on disk.
-	torrentData := []byte("d8:announce35:http://tracker.example.com/announce4:infod6:lengthi1024e4:name8:test.txt12:piece lengthi16384e6:pieces20:xxxxxxxxxxxxxxxxxxxx7:privatei0eee")
+	torrentData := []byte(minimalTorrentData)
 	torrentPath := filepath.Join(m.torrentDir, "test-id.torrent")
 	os.WriteFile(torrentPath, torrentData, 0o644)
 
@@ -734,6 +747,9 @@ func TestManagerLoadStateReattachTorrentFile(t *testing.T) {
 	}
 	if m.items["tf"].Status != StatusQueued {
 		t.Errorf("expected queued status, got %q", m.items["tf"].Status)
+	}
+	if m.torrents["tf"] != nil {
+		t.Fatal("queued torrent file should remain detached after restart")
 	}
 }
 
@@ -831,5 +847,86 @@ func TestManagerProgressLoopRuns(t *testing.T) {
 	// State should have been saved.
 	if _, err := os.Stat(m.statePath); os.IsNotExist(err) {
 		t.Error("expected state file to be written by progressLoop")
+	}
+}
+
+func TestManagerCheckAndStartNextAttachesQueuedMagnet(t *testing.T) {
+	m := newRealManager(t)
+
+	item, err := m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=queued-start")
+	if err != nil {
+		t.Fatalf("AddMagnet() error: %v", err)
+	}
+
+	m.CheckAndStartNext()
+
+	if m.torrents[item.ID] == nil {
+		t.Fatal("front queued magnet should attach when queue processing starts")
+	}
+}
+
+func TestManagerPauseAndResume(t *testing.T) {
+	m := newRealManager(t)
+
+	item, err := m.AddMagnet("magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01&dn=pause-test")
+	if err != nil {
+		t.Fatalf("AddMagnet() error: %v", err)
+	}
+
+	tor, err := m.client.AddMagnet(item.Magnet)
+	if err != nil {
+		t.Fatalf("client.AddMagnet() error: %v", err)
+	}
+
+	m.mu.Lock()
+	m.items[item.ID].Status = StatusDownloading
+	m.torrents[item.ID] = tor
+	m.activeID = item.ID
+	m.mu.Unlock()
+
+	if err := m.Pause(item.ID); err != nil {
+		t.Fatalf("Pause() error: %v", err)
+	}
+	if m.items[item.ID].Status != StatusPaused {
+		t.Fatalf("expected paused status, got %q", m.items[item.ID].Status)
+	}
+	if m.activeID != "" {
+		t.Fatalf("expected activeID cleared, got %q", m.activeID)
+	}
+	if m.torrents[item.ID] != nil {
+		t.Fatal("paused torrent should be detached")
+	}
+
+	if err := m.Resume(item.ID); err != nil {
+		t.Fatalf("Resume() error: %v", err)
+	}
+	if m.items[item.ID].Status != StatusQueued {
+		t.Fatalf("expected resumed item to return to queued, got %q", m.items[item.ID].Status)
+	}
+}
+
+func TestManagerLoadStateKeepsPausedDetached(t *testing.T) {
+	m := newRealManager(t)
+
+	state := State{
+		Items: []*Item{
+			{ID: "p", Name: "paused", Status: StatusPaused, Magnet: "magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01"},
+		},
+		Order: []string{"p"},
+	}
+	data, _ := json.MarshalIndent(state, "", "  ")
+	os.WriteFile(m.statePath, data, 0o644)
+
+	m.items = map[string]*Item{}
+	m.order = nil
+
+	if err := m.loadState(); err != nil {
+		t.Fatalf("loadState() error: %v", err)
+	}
+	if m.items["p"].Status != StatusPaused {
+		t.Fatalf("expected paused status after restart, got %q", m.items["p"].Status)
+	}
+	if m.torrents["p"] != nil {
+		t.Fatal("paused torrent should not be reattached on restart")
 	}
 }
