@@ -615,6 +615,67 @@ func TestManagerAddMagnetRejectsDuplicateInfoHash(t *testing.T) {
 	}
 }
 
+func TestManagerAddMagnetRejectsDuplicatePausedItem(t *testing.T) {
+	m := newRealManager(t)
+
+	item, err := m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=first")
+	if err != nil {
+		t.Fatalf("first AddMagnet() error: %v", err)
+	}
+	m.mu.Lock()
+	m.items[item.ID].Status = StatusPaused
+	m.mu.Unlock()
+
+	_, err = m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=second")
+	if err == nil {
+		t.Fatal("expected duplicate paused magnet to be rejected")
+	}
+	if !strings.Contains(err.Error(), errDuplicateTorrent) {
+		t.Fatalf("expected duplicate error, got %v", err)
+	}
+}
+
+func TestManagerAddMagnetAllowsDuplicateAfterCompletion(t *testing.T) {
+	m := newRealManager(t)
+
+	item, err := m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=first")
+	if err != nil {
+		t.Fatalf("first AddMagnet() error: %v", err)
+	}
+	m.mu.Lock()
+	m.items[item.ID].Status = StatusCompleted
+	m.mu.Unlock()
+
+	dup, err := m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=second")
+	if err != nil {
+		t.Fatalf("expected completed duplicate to be allowed, got %v", err)
+	}
+	if dup == nil {
+		t.Fatal("expected duplicate add result")
+	}
+}
+
+func TestManagerAddMagnetAllowsDuplicateAfterError(t *testing.T) {
+	m := newRealManager(t)
+
+	item, err := m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=first")
+	if err != nil {
+		t.Fatalf("first AddMagnet() error: %v", err)
+	}
+	m.mu.Lock()
+	m.items[item.ID].Status = StatusError
+	m.items[item.ID].ErrorMessage = "failed earlier"
+	m.mu.Unlock()
+
+	dup, err := m.AddMagnet("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=second")
+	if err != nil {
+		t.Fatalf("expected errored duplicate to be allowed, got %v", err)
+	}
+	if dup == nil {
+		t.Fatal("expected duplicate add result")
+	}
+}
+
 func TestManagerAddTorrentFileInvalid(t *testing.T) {
 	m := newRealManager(t)
 
@@ -707,6 +768,27 @@ func TestManagerAddTorrentFileRejectsDuplicateInfoHash(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), errDuplicateTorrent) {
 		t.Fatalf("expected duplicate error, got %v", err)
+	}
+}
+
+func TestManagerAddTorrentFileAllowsDuplicateAfterRemove(t *testing.T) {
+	m := newRealManager(t)
+
+	torrentData := []byte(minimalTorrentData)
+	item, err := m.AddTorrentFile("first.torrent", torrentData)
+	if err != nil {
+		t.Fatalf("first AddTorrentFile() error: %v", err)
+	}
+	if err := m.Remove(item.ID); err != nil {
+		t.Fatalf("Remove() error: %v", err)
+	}
+
+	dup, err := m.AddTorrentFile("second.torrent", torrentData)
+	if err != nil {
+		t.Fatalf("expected re-add after remove to succeed, got %v", err)
+	}
+	if dup == nil {
+		t.Fatal("expected duplicate add result")
 	}
 }
 
@@ -806,6 +888,9 @@ func TestManagerLoadStateReattachTorrentFile(t *testing.T) {
 	}
 	if m.items["tf"].Status != StatusQueued {
 		t.Errorf("expected queued status, got %q", m.items["tf"].Status)
+	}
+	if m.items["tf"].InfoHash == "" {
+		t.Fatal("expected loadState to backfill torrent file info hash")
 	}
 	if m.torrents["tf"] != nil {
 		t.Fatal("queued torrent file should remain detached after restart")
@@ -984,6 +1069,9 @@ func TestManagerLoadStateKeepsPausedDetached(t *testing.T) {
 	}
 	if m.items["p"].Status != StatusPaused {
 		t.Fatalf("expected paused status after restart, got %q", m.items["p"].Status)
+	}
+	if m.items["p"].InfoHash != "abcdef0123456789abcdef0123456789abcdef01" {
+		t.Fatalf("expected paused magnet info hash to be backfilled, got %q", m.items["p"].InfoHash)
 	}
 	if m.torrents["p"] != nil {
 		t.Fatal("paused torrent should not be reattached on restart")
