@@ -86,6 +86,45 @@ func TestNewManagerInvalidDataDir(t *testing.T) {
 	t.Cleanup(func() { m.Close() })
 }
 
+func TestNewClientConfigEnablesPublicPeerDiscovery(t *testing.T) {
+	storagePath := t.TempDir()
+	cfg := newClientConfig(storagePath)
+
+	if cfg.DataDir != storagePath {
+		t.Errorf("expected DataDir %q, got %q", storagePath, cfg.DataDir)
+	}
+	if cfg.NoDHT {
+		t.Error("expected DHT to be enabled for low-seeder peer discovery")
+	}
+	if cfg.DisablePEX {
+		t.Error("expected PEX to be enabled for low-seeder peer discovery")
+	}
+	if cfg.DisableWebseeds {
+		t.Error("expected webseeds to be enabled as a fallback source")
+	}
+	if !cfg.DisableWebtorrent {
+		t.Error("expected WebTorrent support to remain disabled")
+	}
+	if !cfg.NoUpload {
+		t.Error("expected upload suppression to remain enabled")
+	}
+	if !cfg.NoDefaultPortForwarding {
+		t.Error("expected default port forwarding to remain disabled")
+	}
+	if cfg.ListenPort != 0 {
+		t.Errorf("expected random listen port, got %d", cfg.ListenPort)
+	}
+	if cfg.EstablishedConnsPerTorrent < 40 {
+		t.Errorf("expected at least 40 established connections per torrent, got %d", cfg.EstablishedConnsPerTorrent)
+	}
+	if cfg.HalfOpenConnsPerTorrent < 16 {
+		t.Errorf("expected at least 16 half-open connections per torrent, got %d", cfg.HalfOpenConnsPerTorrent)
+	}
+	if cfg.TotalHalfOpenConns < 32 {
+		t.Errorf("expected at least 32 total half-open connections, got %d", cfg.TotalHalfOpenConns)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
