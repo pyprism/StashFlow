@@ -65,21 +65,7 @@ type Manager struct {
 }
 
 func NewManager(storagePath, torrentDir, statePath string, maxUsagePercent float64) (*Manager, error) {
-	cfg := atorrent.NewDefaultClientConfig()
-	cfg.DataDir = storagePath
-	cfg.NoDefaultPortForwarding = true
-	cfg.ListenPort = 0
-	cfg.NoDHT = true
-	cfg.DisablePEX = true
-	cfg.DisableWebtorrent = true
-	cfg.DisableWebseeds = true
-	cfg.NoUpload = true
-	cfg.MaxUnverifiedBytes = 32 << 20
-	cfg.EstablishedConnsPerTorrent = 24
-	cfg.HalfOpenConnsPerTorrent = 8
-	cfg.TotalHalfOpenConns = 16
-	cfg.MaxAllocPeerRequestDataPerConn = 256 << 10
-	cfg.PieceHashersPerTorrent = 1
+	cfg := newClientConfig(storagePath)
 
 	client, err := atorrent.NewClient(cfg)
 	if err != nil {
@@ -103,6 +89,25 @@ func NewManager(storagePath, torrentDir, statePath string, maxUsagePercent float
 	}
 
 	return m, nil
+}
+
+func newClientConfig(storagePath string) *atorrent.ClientConfig {
+	cfg := atorrent.NewDefaultClientConfig()
+	cfg.DataDir = storagePath
+	cfg.NoDefaultPortForwarding = true
+	cfg.ListenPort = 0
+	cfg.NoDHT = false
+	cfg.DisablePEX = false
+	cfg.DisableWebtorrent = true
+	cfg.DisableWebseeds = false
+	cfg.NoUpload = true
+	cfg.MaxUnverifiedBytes = 32 << 20
+	cfg.EstablishedConnsPerTorrent = 40
+	cfg.HalfOpenConnsPerTorrent = 16
+	cfg.TotalHalfOpenConns = 32
+	cfg.MaxAllocPeerRequestDataPerConn = 256 << 10
+	cfg.PieceHashersPerTorrent = 1
+	return cfg
 }
 
 func (m *Manager) SetOnChange(fn func()) {
