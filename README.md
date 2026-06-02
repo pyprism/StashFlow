@@ -10,6 +10,7 @@ StashFlow is a lightweight, storage aware torrent client  with a single binary d
 - Queued magnet links stay passive until they reach the front of the queue. If a magnet has no known size yet, StashFlow fetches metadata only for that front item.
 - Only one torrent is attached for active download at a time.
 - Queue items can be paused and resumed from the web UI. Paused items stay detached across restarts.
+- The active torrent can use trackers, DHT, PEX, and webseeds for peer discovery, which helps public torrents with very few seeders.
 
 ## Why StashFlow exists ?
 I run an SBC with 8 GB of RAM, using `tmpfs` as storage for torrent downloads. The problem is that I can't start torrents
