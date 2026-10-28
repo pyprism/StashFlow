@@ -1,107 +1,174 @@
-# StashFlow [![Stashflow CI](https://github.com/pyprism/StashFlow/actions/workflows/run-tests.yaml/badge.svg)](https://github.com/pyprism/StashFlow/actions/workflows/run-tests.yaml) [![codecov](https://codecov.io/gh/pyprism/StashFlow/branch/master/graph/badge.svg?token=At5W6tSKFC)](https://codecov.io/gh/pyprism/StashFlow)
+# StashFlow
 
-<div align="center"><img src="internal/web/ui/images/logo.png" alt="StashFlow logo" width="200" style="max-width:200px; height:auto;"></div>
+[![Stashflow CI](https://github.com/pyprism/StashFlow/actions/workflows/run-tests.yaml/badge.svg)](https://github.com/pyprism/StashFlow/actions/workflows/run-tests.yaml)
+[![codecov](https://codecov.io/gh/pyprism/StashFlow/branch/master/graph/badge.svg)](https://codecov.io/gh/pyprism/StashFlow)
 
-StashFlow is a lightweight, storage aware torrent client  with a single binary deployment.
+<p align="center">
+  <img src="internal/web/ui/images/logo.png" alt="StashFlow logo" width="160">
+</p>
 
-## Queue Semantics
+StashFlow is a lightweight torrent client that checks available storage before starting downloads. It runs as a single binary with an embedded web interface, downloads one torrent at a time, and automatically revisits queued downloads as space becomes available.
 
-- Uploaded `.torrent` files are parsed offline first, so queued entries show name and size without contacting trackers or peers.
-- Queued magnet links stay passive until they reach the front of the queue. If a magnet has no known size yet, StashFlow fetches metadata only for that front item.
-- Only one torrent is attached for active download at a time.
-- Queue items can be paused and resumed from the web UI. Paused items stay detached across restarts.
-- The active torrent can use trackers, DHT, PEX, and webseeds for peer discovery, which helps public torrents with very few seeders.
+It was built for a single-board computer with 8 GB of RAM and a `tmpfs` download directory, where storage needs to be freed between downloads. It also works with ordinary disk storage on Linux and macOS.
 
-## Why StashFlow exists ?
-I run an SBC with 8 GB of RAM, using `tmpfs` as storage for torrent downloads. The problem is that I can't start torrents
-whenever I want there simply isn’t always enough space available. Traditional torrent clients also don’t automatically 
-resume queued downloads once storage becomes free. Because of that, downloads require constant manual monitoring.
+## Features
 
-So I built StashFlow to solve this.
+- Add magnet links or upload `.torrent` files from the browser.
+- Drag to reorder the queue, pause and resume downloads, and remove entries.
+- View live download progress and filesystem usage.
+- Keep queued torrents passive until they are considered for download.
+- Persist queue order and paused state across restarts.
+- Configure a filesystem usage threshold, set to 90% by default.
+- Run in the background or in the foreground for development and service supervision.
 
 ## Screenshot
 
-<div style="text-align:center;"><img src="Screenshot.png" alt="StashFlow screenshot" width="800" style="max-width:100%; height:auto;"></div>
+![StashFlow web interface](Screenshot.png)
 
-## Quick Start
+## Quick start
 
-1. Build: `go build -o stashflow ./cmd/stashflow`
-2. Run: `./stashflow start`
-3. Open: `http://localhost:<port>`
+### Build from source
+
+You need Go 1.26.1 or newer and Git. The web interface is embedded at build time; no separate frontend build is needed.
+
+```bash
+git clone https://github.com/pyprism/StashFlow.git
+cd StashFlow
+go build -o stashflow ./cmd/stashflow
+./stashflow start
+```
+
+On first start, enter a writable storage path and choose a port:
+
+```text
+Storage path: /absolute/path/to/downloads
+Port (default 8080):
+```
+
+Press Enter to use port `8080`, then open **http://localhost:8080**. If you chose another port, use that port instead. Subsequent starts reuse the saved settings.
+
+### Release binaries
+
+You can also check the [releases page](https://github.com/pyprism/StashFlow/releases) for a binary matching your platform. The release build script targets Linux (`amd64`, `arm`, `arm64`) and macOS (`arm64`). Release archives are gzip-compressed executables, not tar archives.
+
+After downloading an archive, replace the example filename below with the downloaded filename:
+
+```bash
+gunzip stashflow-VERSION-linux-arm64.gz
+mv stashflow-VERSION-linux-arm64 stashflow
+chmod +x stashflow
+./stashflow start
+```
+
+## Using the web interface
+
+1. Add a magnet link or upload a `.torrent` file.
+2. Drag queue entries to choose their order. StashFlow starts an eligible torrent when enough space is available.
+3. Pause or resume entries as needed. Paused entries remain paused after a restart.
+4. Move or delete finished files from the download directory to free space for more downloads. Use **Check Storage Now** to request an immediate check.
+
+Removing an entry removes its queue record and saved `.torrent` file, but **does not delete downloaded content**.
+
+## How the queue handles storage
+
+StashFlow measures the filesystem containing the configured storage path. By default, it starts a torrent only when the torrent's full size fits below 90% filesystem usage. Other files on that filesystem count toward usage too; the threshold is not a quota on the download directory alone.
+
+For example, on a filesystem with 100 GB total capacity and 80 GB already used, the default threshold leaves about 10 GB available for a new torrent. This is a check before starting a download, not an enforced filesystem quota.
+
+- Only one torrent downloads at a time.
+- Uploaded `.torrent` files are parsed offline, so their names and sizes are available before contacting peers.
+- Queued magnets stay passive until considered for download. A magnet with an unknown size must fetch metadata before the storage check can finish.
+- Queue order determines priority, but a known-size torrent that does not fit can be skipped in favor of a later one that does.
+- Downloads waiting for space are checked automatically. A torrent larger than the configured maximum is marked as an error.
+- Completed torrents are detached; StashFlow does not keep them running for continued seeding.
+
+The active torrent can discover peers through trackers, DHT, PEX, and webseeds.
+
+## CLI commands
+
+| Command | Purpose |
+| --- | --- |
+| `./stashflow start` | Configure on first use, then start in the background. |
+| `./stashflow start -f` | Run in the foreground; `--foreground` also works. |
+| `./stashflow stop` | Send a termination signal to the running service. |
+| `./stashflow status` | Show process status, storage path, port, and queue counts. |
+| `./stashflow version` | Print the binary version. |
+
+For local development:
+
+```bash
+go run ./cmd/stashflow start -f
+```
+
+This uses the same configuration and queue state as the compiled binary. Press Ctrl+C to stop a foreground process.
+
+## Configuration and state
+
+StashFlow stores its configuration separately from downloaded content:
+
+| Platform | Default directory |
+| --- | --- |
+| Linux | `~/.config/stashflow/` (or `$XDG_CONFIG_HOME/stashflow/` when set) |
+| macOS | `~/Library/Application Support/stashflow/` |
+
+| File | Contents |
+| --- | --- |
+| `config.json` | Storage path, HTTP port, and usage threshold. |
+| `state.json` | Queue entries, statuses, and ordering. |
+| `torrents/` | Uploaded torrent files used to restore entries. |
+| `stashflow.pid` | Running process ID. |
+| `stashflow.log` | Background service output. |
+
+Example `config.json`:
+
+```json
+{
+  "storage_path": "/absolute/path/to/downloads",
+  "port": 8080,
+  "max_usage_percent": 0.9
+}
+```
+
+`max_usage_percent` is a fraction: `0.9` means 90%. The web interface accepts usage limits from 1% to 100% and applies changes to the threshold without a restart. Changing the storage path or port requires restarting:
+
+```bash
+./stashflow stop
+./stashflow start
+```
+
+Stop the service before editing configuration or state files manually. A persisted queue does not preserve the contents of a `tmpfs` download directory through a reboot.
+
+The HTTP server listens on all interfaces on the configured port and has no built-in authentication or TLS. For access beyond a trusted local network, place it behind an authenticated HTTPS reverse proxy or a private network.
 
 ## Development
 
-Run without compiling:
-
-- `go run ./cmd/stashflow start`
-
-This uses the same config/state paths as the built binary.
-
-### Using Makefile
-
-The project includes a Makefile for common development tasks:
-
 ```bash
-make test          # Run all tests
-make test-cover    # Run tests with coverage
-make coverage-html # Generate HTML coverage report
-make test-bench    # Run benchmarks
-make build         # Build the binary
-make build-arm64   # Build for ARM64
-make lint          # Run go vet and go fmt
-make clean         # Clean build artifacts
-make help          # Show all available targets
+make build          # Build ./stashflow
+make test           # Run all tests
+make test-cover     # Show test coverage
+make coverage-html  # Write coverage.out and coverage.html
+make test-bench     # Run benchmarks
+make lint           # Run go vet and go fmt (formats source files)
+make build-arm64    # Build for Linux ARM64
+make help           # List available targets
 ```
 
-## Testing
-
-Run unit tests:
+Run the race-enabled test suite used by CI:
 
 ```bash
-# Run all tests
-go test ./...
-
-# Run tests with verbose output
-go test -v ./...
-
-# Run tests with coverage
-go test -cover ./...
-
-# Generate HTML coverage report
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out -o coverage.html
-
-# Run benchmark tests
-go test -bench=. -benchmem ./...
-
-# Run benchmarks for specific package
-go test -bench=. -benchmem ./internal/storage
+go test -race -coverprofile=coverage.txt ./...
 ```
 
-## CLI Commands
+To build release archives locally:
 
-- `stashflow start` starts the service and prompts for storage path + port interactively, saves config then daemonize.
-- `stashflow stop` sends SIGTERM, waits up to 6s for exit, cleans up PID file.
-- `stashflow status` prints PID, storage path, port, and queue counts.
-- `stashflow start -f` starts the service in the foreground (no demonization) for debugging.
+```bash
+./build-executables.sh v1.0.0
+```
 
-## Storage and Queue State
+Replace the version with the desired release tag. The script recreates `release/` and writes platform-specific `.gz` files there.
 
-Configuration and state are stored in user config directory:
+## License and credits
 
-- macOS: `~/Library/Application Support/stashflow/`
-- Linux: `~/.config/stashflow/`
+StashFlow is available under the [MIT License](LICENSE).
 
-Files:
-
-- `config.json` stores settings like storage path and port.
-- `state.json` stores the queue items and ordering.
-- `torrents/` stores uploaded .torrent files for persistence.
-- `stashflow.log` contains logs of service basic activity.
-
-## Notes
-
-- Changing storage path or port from the web UI requires restarting the service.
-- StashFlow limits total usage to 90% of the configured storage location.
-
-### Icon credit: <a href="https://www.flaticon.com/free-icon/pirate_6208182" title="pirate icons">Pirate icons created by Freepik - Flaticon</a>
+Torrent engine: [anacrolix/torrent](https://github.com/anacrolix/torrent). Pirate icon: [Freepik on Flaticon](https://www.flaticon.com/free-icon/pirate_6208182).
