@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -46,22 +47,30 @@ type Diagnostics struct {
 	AttachedTorrents int                  `json:"attached_torrents"`
 	Queue            QueueCounts          `json:"queue"`
 	Transitions      transitionStats      `json:"transitions"`
+	Resources        ResourceStats        `json:"resources"`
+	Storage          *storage.Stats       `json:"storage"`
+	StorageError     string               `json:"storage_error,omitempty"`
+	ActivePeers      int                  `json:"active_peers"`
 	ClientStats      atorrent.ClientStats `json:"client_stats"`
 }
 
 type Manager struct {
-	mu              sync.Mutex
-	client          *atorrent.Client
-	items           map[string]*Item
-	torrents        map[string]*atorrent.Torrent
-	order           []string
-	activeID        string
-	statePath       string
-	storagePath     string
-	maxUsagePercent float64
-	torrentDir      string
-	onChange        func()
-	transitions     transitionStats
+	mu                sync.Mutex
+	client            *atorrent.Client
+	items             map[string]*Item
+	torrents          map[string]*atorrent.Torrent
+	order             []string
+	activeID          string
+	statePath         string
+	storagePath       string
+	maxUsagePercent   float64
+	torrentDir        string
+	onChange          func()
+	transitions       transitionStats
+	closed            bool
+	done              chan struct{}
+	workers           sync.WaitGroup
+	backgroundStarted bool
 }
 
 func NewManager(storagePath, torrentDir, statePath string, maxUsagePercent float64) (*Manager, error) {
@@ -81,6 +90,7 @@ func NewManager(storagePath, torrentDir, statePath string, maxUsagePercent float
 		storagePath:     storagePath,
 		maxUsagePercent: maxUsagePercent,
 		torrentDir:      torrentDir,
+		done:            make(chan struct{}),
 	}
 
 	if err := m.loadState(); err != nil {
@@ -111,6 +121,8 @@ func newClientConfig(storagePath string) *atorrent.ClientConfig {
 }
 
 func (m *Manager) SetOnChange(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.onChange = fn
 }
 
@@ -121,25 +133,54 @@ func (m *Manager) SetMaxUsagePercent(pct float64) {
 }
 
 func (m *Manager) Close() error {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil
+	}
+	m.closed = true
+	if m.done != nil {
+		close(m.done)
+	}
+	for id := range m.torrents {
+		m.dropTorrentLocked(id)
+	}
+	m.mu.Unlock()
+	m.workers.Wait()
 	if m.client == nil {
 		return nil
 	}
 	errs := m.client.Close()
-	if len(errs) == 0 {
-		return nil
+	if len(errs) > 0 {
+		return errs[0]
 	}
-	return errs[0]
+	return nil
 }
 
 func (m *Manager) StartBackground() {
-	go m.progressLoop()
-	go m.storageLoop()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.backgroundStarted {
+		return
+	}
+	if m.done == nil {
+		m.done = make(chan struct{})
+	}
+	m.backgroundStarted = true
+	m.workers.Add(2)
+	go func() { defer m.workers.Done(); m.progressLoop() }()
+	go func() { defer m.workers.Done(); m.storageLoop() }()
 }
 
 func (m *Manager) progressLoop() {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-m.done:
+			return
+		case <-ticker.C:
+		}
 		m.mu.Lock()
 		for id, item := range m.items {
 			if item.Status != StatusDownloading {
@@ -178,7 +219,12 @@ func (m *Manager) progressLoop() {
 func (m *Manager) storageLoop() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-m.done:
+			return
+		case <-ticker.C:
+		}
 		m.CheckAndStartNext()
 	}
 }
@@ -186,6 +232,12 @@ func (m *Manager) storageLoop() {
 func (m *Manager) State() *StateView {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	metadataID := ""
+	for id := range m.torrents {
+		if item := m.items[id]; item != nil && item.Status == StatusQueued {
+			metadataID = id
+		}
+	}
 	items := make([]*Item, 0, len(m.order))
 	for _, id := range m.order {
 		if it, ok := m.items[id]; ok {
@@ -194,9 +246,10 @@ func (m *Manager) State() *StateView {
 		}
 	}
 	return &StateView{
-		Items:    items,
-		Order:    append([]string{}, m.order...),
-		ActiveID: m.activeID,
+		Items:      items,
+		Order:      append([]string{}, m.order...),
+		ActiveID:   m.activeID,
+		MetadataID: metadataID,
 	}
 }
 
@@ -209,6 +262,15 @@ func (m *Manager) Diagnostics() Diagnostics {
 		AttachedTorrents: len(m.torrents),
 		Transitions:      m.transitions,
 		Queue:            countStatuses(m.items),
+	}
+	diag.Resources = resourceSnapshot()
+	var err error
+	diag.Storage, err = storage.Stat(m.storagePath, m.maxUsagePercent)
+	if err != nil {
+		diag.StorageError = err.Error()
+	}
+	for _, t := range m.torrents {
+		diag.ActivePeers += t.Stats().ActivePeers
 	}
 	if m.client != nil {
 		diag.ClientStats = m.client.Stats()
@@ -417,6 +479,10 @@ func (m *Manager) Reorder(order []string) {
 func (m *Manager) CheckAndStartNext() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Metadata discovery owns the same single slot as downloading, even after reordering.
+	if m.closed || len(m.torrents) > 0 {
+		return
+	}
 
 	if m.activeID != "" {
 		if item, ok := m.items[m.activeID]; ok && item.Status == StatusDownloading {
@@ -437,7 +503,7 @@ func (m *Manager) CheckAndStartNext() {
 		}
 
 		if item.SizeBytes <= 0 {
-			if item.Magnet == "" || m.client == nil {
+			if item.Magnet == "" || m.client == nil || stats.AvailableForNew == 0 {
 				continue
 			}
 			if m.torrents[id] != nil {
@@ -458,9 +524,11 @@ func (m *Manager) CheckAndStartNext() {
 			m.torrents[id] = t
 			m.transitions.Attachments++
 			m.transitions.MetadataFetches++
+			slog.Info("torrent metadata fetch", "id", id)
 			m.saveStateLocked()
 			go m.notifyChange(m.onChange)
-			go m.resolveMetadata(id, t)
+			m.workers.Add(1)
+			go func() { defer m.workers.Done(); m.resolveMetadata(id, t) }()
 			return
 		}
 
@@ -486,9 +554,11 @@ func (m *Manager) CheckAndStartNext() {
 		item.ErrorMessage = ""
 		m.activeID = id
 		m.transitions.Starts++
+		slog.Info("torrent started", "id", id)
 		m.saveStateLocked()
 		go m.notifyChange(m.onChange)
-		go m.awaitInfoAndDownload(id, t)
+		m.workers.Add(1)
+		go func() { defer m.workers.Done(); m.awaitInfoAndDownload(id, t) }()
 		return
 	}
 }
@@ -541,12 +611,23 @@ func (m *Manager) awaitInfoAndDownload(id string, t *atorrent.Torrent) {
 
 	item.Name = chooseName(item.Name, t.Name())
 	item.SizeBytes = t.Info().TotalLength()
+	if err := m.cacheMetadataLocked(item, t); err != nil {
+		item.Status = StatusError
+		item.ErrorMessage = "failed to save torrent metadata: " + err.Error()
+		m.activeID = ""
+		m.dropTorrentLocked(id)
+		m.saveStateLocked()
+		changed := m.onChange
+		m.mu.Unlock()
+		m.notifyChange(changed)
+		m.CheckAndStartNext()
+		return
+	}
 	item.ErrorMessage = ""
 	m.saveStateLocked()
 	changed := m.onChange
-	m.mu.Unlock()
-
 	t.DownloadAll()
+	m.mu.Unlock()
 	m.notifyChange(changed)
 }
 
@@ -595,6 +676,18 @@ func (m *Manager) resolveMetadata(id string, t *atorrent.Torrent) {
 
 	item.Name = chooseName(item.Name, t.Name())
 	item.SizeBytes = t.Info().TotalLength()
+	if err := m.cacheMetadataLocked(item, t); err != nil {
+		item.Status = StatusError
+		item.ErrorMessage = "failed to save torrent metadata: " + err.Error()
+		m.activeID = ""
+		m.dropTorrentLocked(id)
+		m.saveStateLocked()
+		changed := m.onChange
+		m.mu.Unlock()
+		m.notifyChange(changed)
+		m.CheckAndStartNext()
+		return
+	}
 	decision, err := m.applyStorageResultLocked(item)
 	if err != nil {
 		m.dropTorrentLocked(id)
@@ -613,9 +706,10 @@ func (m *Manager) resolveMetadata(id string, t *atorrent.Torrent) {
 		item.ErrorMessage = ""
 		m.activeID = id
 		m.transitions.Starts++
+		slog.Info("torrent started", "id", id)
 		m.saveStateLocked()
-		m.mu.Unlock()
 		t.DownloadAll()
+		m.mu.Unlock()
 		m.notifyChange(changed)
 	case storageDecisionTemporaryShortage:
 		item.Status = StatusQueued
@@ -725,13 +819,13 @@ func (m *Manager) attachTorrentLocked(item *Item) (*atorrent.Torrent, error) {
 		err error
 	)
 	switch {
+	case item.TorrentFile != "":
+		t, err = m.client.AddTorrentFromFile(item.TorrentFile)
 	case item.Magnet != "":
 		t, err = m.client.AddMagnet(item.Magnet)
 		if err == nil && item.Name != "" {
 			t.SetDisplayName(item.Name)
 		}
-	case item.TorrentFile != "":
-		t, err = m.client.AddTorrentFromFile(item.TorrentFile)
 	default:
 		return nil, errors.New("torrent source missing")
 	}
@@ -741,7 +835,26 @@ func (m *Manager) attachTorrentLocked(item *Item) (*atorrent.Torrent, error) {
 
 	m.torrents[item.ID] = t
 	m.transitions.Attachments++
+	slog.Info("torrent attached", "info_hash", t.InfoHash().HexString())
 	return t, nil
+}
+
+// Cache metadata so waiting magnets and restarts do not repeat peer discovery.
+func (m *Manager) cacheMetadataLocked(item *Item, t *atorrent.Torrent) error {
+	if item.TorrentFile != "" {
+		return nil
+	}
+	mi := t.Metainfo()
+	var buf bytes.Buffer
+	if err := mi.Write(&buf); err != nil {
+		return err
+	}
+	target := filepath.Join(m.torrentDir, item.ID+".torrent")
+	if err := os.WriteFile(target, buf.Bytes(), 0o644); err != nil {
+		return err
+	}
+	item.TorrentFile = target
+	return nil
 }
 
 func (m *Manager) dropTorrentLocked(id string) {
@@ -752,6 +865,7 @@ func (m *Manager) dropTorrentLocked(id string) {
 	t.Drop()
 	delete(m.torrents, id)
 	m.transitions.Drops++
+	slog.Info("torrent detached", "id", id)
 }
 
 func (m *Manager) applyStorageResultLocked(item *Item) (storageDecision, error) {
