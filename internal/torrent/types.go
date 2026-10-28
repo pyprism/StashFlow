@@ -32,9 +32,10 @@ type State struct {
 }
 
 type StateView struct {
-	Items    []*Item  `json:"items"`
-	Order    []string `json:"order"`
-	ActiveID string   `json:"active_id"`
+	Items      []*Item  `json:"items"`
+	Order      []string `json:"order"`
+	ActiveID   string   `json:"active_id"`
+	MetadataID string   `json:"metadata_id,omitempty"`
 }
 
 type QueueCounts struct {
