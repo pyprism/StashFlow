@@ -34,6 +34,7 @@ func (s *Server) Router() *gin.Engine {
 	r.Use(gin.Recovery())
 
 	r.GET("/api/state", s.handleState)
+	s.registerDebugRoutes(r)
 	r.GET("/api/settings", s.handleGetSettings)
 	r.PUT("/api/settings", s.handleUpdateSettings)
 	r.POST("/api/torrents", s.handleAddTorrent)
