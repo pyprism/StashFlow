@@ -84,6 +84,49 @@ For example, on a filesystem with 100 GB total capacity and 80 GB already used, 
 
 The active torrent can discover peers through trackers, DHT, PEX, and webseeds.
 
+Metadata discovery uses the same single slot as downloading, even if the queue is reordered during discovery. Unknown magnets wait when there is no storage headroom. The interface shows which magnet is fetching metadata; other queued magnets remain passive. Fetched metadata is saved in `torrents/` and reused after pauses and restarts. The client may still perform general DHT maintenance while idle; detached queue entries do not announce for their torrents.
+
+## Memory diagnostics
+
+For a diagnostic session, start in the foreground with profiling enabled:
+
+```bash
+STASHFLOW_DEBUG=1 ./stashflow start -f
+```
+
+This enables the following endpoints on the existing HTTP port, accessible only through direct loopback connections. They are absent by default. If using a reverse proxy, exclude `/debug/` from its public routes: a local proxy's requests also originate on loopback.
+
+```bash
+curl -fsS http://127.0.0.1:8080/debug/diagnostics
+curl -fsS http://127.0.0.1:8080/debug/pprof/heap -o heap.pb.gz
+curl -fsS http://127.0.0.1:8080/debug/pprof/goroutine -o goroutine.pb.gz
+go tool pprof -top ./stashflow heap.pb.gz
+```
+
+Diagnostics report timestamped Go heap allocation, heap in use, Go runtime system memory, goroutine count, current Linux RSS, peer counts, attached torrent count, queue counts, transition counters, and download-filesystem usage. RSS is `null` on other platforms or when `/proc/self/statm` is unavailable. Attachment/start/detachment events are also written to the service log.
+
+The client budgets are 32 MiB of unverified data, 40 established connections per torrent, 16 half-open connections per torrent, 32 total half-open connections, 256 KiB of allocated peer request data per connection, and one piece hasher. These limit specific resources; they are not a total process-memory cap. DHT, PEX, and webseeds remain enabled for public peer discovery. WebTorrent, uploads, and automatic port forwarding remain disabled.
+
+For a repeatable experiment on an 8 GB Linux machine:
+
+1. Record the OS, architecture, StashFlow version, tmpfs size, storage threshold, and torrent size. Use a torrent you are authorized to download that fits within the configured threshold.
+2. Capture a diagnostic baseline with an empty queue. Add several paused/queued entries and confirm only the selected torrent attaches.
+3. During a large download, sample diagnostics every five seconds, saving one JSON record per line:
+
+   ```bash
+   while true; do
+     curl -fsS http://127.0.0.1:8080/debug/diagnostics
+     printf '\n'
+     sleep 5
+   done > memory-samples.jsonl
+   ```
+
+4. Capture heap and goroutine profiles during download, after pausing, after resuming, and after completion. Check that attachments fall to zero when paused and never exceed one. Compare transition counters with the service log.
+5. Compare peak `resources.rss_bytes`, `resources.heap_alloc_bytes`, peer counts, and `storage.used_bytes`. On tmpfs, downloaded data consumes system RAM separately from the Go heap. Filesystem usage includes other files on the same mount; RSS includes resident mappings and runtime/native memory, so do not simply add RSS and filesystem usage as a precise RAM total.
+6. Move completed files out of tmpfs, sample again, and repeat with ordinary disk storage. Go can retain memory for reuse after a download; distinguish retained heap capacity from a continuously growing live heap using the profiles.
+
+No fixed peak-memory figure is assumed for an 8 GB device. Measure with its actual workload before changing the client budgets. A local sampling-overhead benchmark is available with `go test ./internal/torrent -run '^$' -bench BenchmarkResourceSnapshot -benchmem`.
+
 ## CLI commands
 
 | Command | Purpose |
