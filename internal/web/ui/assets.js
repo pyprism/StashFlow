@@ -2,6 +2,7 @@ const state = {
   items: [],
   storage: null,
   activeId: null,
+  metadataId: null,
 };
 
 let isDragging = false;
@@ -79,7 +80,7 @@ function renderStorage() {
 }
 
 function isPassiveMagnet(item) {
-  return item.magnet && item.status === "queued" && !item.size_bytes;
+  return item.magnet && item.status === "queued" && !item.size_bytes && state.metadataId !== item.id;
 }
 
 function buildTorrentCard(item, isCompleted = false) {
@@ -88,7 +89,8 @@ function buildTorrentCard(item, isCompleted = false) {
   card.draggable = !isCompleted;
   card.dataset.id = item.id;
 
-  const title = item.name || "(Fetching metadata\u2026)";
+  const fetchingMetadata = state.metadataId === item.id;
+  const title = item.name || (fetchingMetadata ? "(Fetching metadata\u2026)" : "(Metadata pending)");
   const size = item.size_bytes ? formatBytes(item.size_bytes) : "-";
   const progress = isCompleted ? 1 : (item.progress || 0);
 
@@ -105,7 +107,7 @@ function buildTorrentCard(item, isCompleted = false) {
     <span>${escapeHtml(size)}</span>
     <div class="progress"><span style="width:${(progress * 100).toFixed(1)}%"></span></div>
     ${downloadInfo}
-    <span class="status ${item.status}">${escapeHtml(item.status)}</span>
+    <span class="status ${item.status}">${escapeHtml(fetchingMetadata ? "fetching metadata" : item.status)}</span>
   `;
 
   if (item.error_message) {
@@ -118,7 +120,7 @@ function buildTorrentCard(item, isCompleted = false) {
   if (isPassiveMagnet(item)) {
     const hintEl = document.createElement("span");
     hintEl.className = "queue-hint";
-    hintEl.textContent = "Metadata lookup starts only when this magnet reaches the front of the queue.";
+    hintEl.textContent = "No peer contact yet. Metadata lookup starts when this magnet is selected and storage has headroom.";
     meta.appendChild(hintEl);
   }
 
@@ -191,6 +193,7 @@ function updateState(payload) {
   if (payload.state) {
     state.items = payload.state.items || [];
     state.activeId = payload.state.active_id;
+    state.metadataId = payload.state.metadata_id || null;
   }
   if (payload.storage) {
     state.storage = payload.storage;
